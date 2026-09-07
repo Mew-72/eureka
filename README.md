@@ -1,7 +1,6 @@
 # Face Identification and Verification Pipeline
 
-CLI-only implementation of the HH Goa 2026 Task 3 pipeline described in
-`Face_Identification_Blockchain_Verification_PRD.md`.
+CLI-only implementation of the HH Goa 2026 Task 3 pipeline
 
 ## Phase status
 
