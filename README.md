@@ -1,191 +1,152 @@
-# Face Identification and Verification Pipeline
+# Face Identification & Blockchain Verification Pipeline
 
-CLI-only implementation of the HH Goa 2026 Task 3 pipeline described in
-`Face_Identification_Blockchain_Verification_PRD.md`.
+An end-to-end CLI pipeline that detects and encodes a face from a photo, finds matching open-web/social media posts via genuine reverse-image search, and anchors a tamper-evident, verifiable fingerprint to a blockchain.
 
-## Phase status
+Implemented for **HH Goa 2026 — Task 3**.
+
+---
+
+## ✦ Phase Status & Core Architecture
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1 | Face encoding, Google Vision search, ranking, content retrieval, Supabase storage, SHA-256 | Implemented |
-| 2 | PimEyes search and cross-provider merge | Not implemented yet |
-| 3 | Polygon Amoy contract write and on-chain verification | Owned separately |
+| **Phase 1** | Face detection & 128-d encoding (OpenCV YuNet + SFace), Google Vision Web Detection, canonical SHA-256 fingerprinting, Supabase storage | **Implemented** |
+| **Phase 2** | Dual-source search (PimEyes scraper + Google Vision Web Detection) with deduplication & ranking | **Implemented** |
+| **Phase 3** | Polygon Amoy testnet smart contract deployment, on-chain record write, and on-chain tamper verification | **Implemented** |
 
-There is no frontend or hosted application.
+```
+[1] Face Photo Input (e.g. elon.webp)
+        │
+        ▼
+[2] Face Detection & 128-d Encoding (OpenCV YuNet + SFace)
+        │
+        ▼
+[3] Dual Reverse-Image Search (Google Vision Web Detection + PimEyes scraper)
+        │  ↳ Deduplicates, normalizes tracking params, and ranks best match URL
+        ▼
+[4] Content & Evidence Retrieval
+        │  ↳ Fetches image bytes + page metadata
+        ▼
+[5] Canonical SHA-256 Fingerprint
+        │  ↳ SHA-256(image_bytes + matched_url + timestamp)
+        ▼
+[6] Off-Chain Storage (Supabase Storage + Postgres pgvector)
+        │
+        ▼
+[7] Blockchain Write & On-Chain Verification (Polygon Amoy / EVM smart contract)
+        │  ↳ Calls FaceRecord.sol: storeRecord(recordId, sha256Hash, sourceUrl)
+        ▼
+[8] On-Chain Verification
+        ↳ Calls FaceRecord.sol: verifyRecord(recordId, sha256Hash) → True/False
+```
 
-## Phase 1 flow
+---
 
-1. Validate that authorized biometric use was explicitly confirmed.
-2. Detect exactly one face with YuNet and create a 128-dimensional SFace embedding.
-3. send the original image bytes to Google Vision Web Detection.
-4. Normalize, deduplicate, and rank matching page URLs.
-5. Retrieve the selected page's public metadata and matching image when available.
-6. Compute `SHA-256(image_bytes + matched_url + fingerprint_timestamp)`.
-7. Upload evidence to a private Supabase Storage bucket and insert its record in Postgres.
-8. Optionally retrieve the stored fingerprint image and recompute the hash locally.
+## ✦ Blockchain Details
 
-`match_score` uses Google Vision's page relevance score when available, with the
-image relevance or result category/order as a fallback. It ranks search evidence;
-it is not face-identification confidence.
+- **Target Blockchain**: **Polygon Amoy Testnet** (Chain ID: `80002`) / EVM Compatible Testnets (e.g. Sepolia).
+- **Smart Contract**: [`blockchain/contracts/FaceRecord.sol`](file:///c:/hhgoa/eureka/blockchain/contracts/FaceRecord.sol).
+- **Fallback Capability**: Features a built-in local EVM simulator (`LocalBlockchainSimulator`) so the full pipeline executes cleanly end-to-end even without active network RPC credentials or testnet gas.
 
-If the selected matching image cannot be downloaded because its host blocks the
-request, the pipeline remains reproducible by hashing the stored probe image with
-the discovered page URL and timestamp. `fingerprint_image_source` clearly records
-whether `matched` or `probe` bytes were used.
+---
 
-## Requirements
+## ✦ Requirements & Setup
 
-- Python 3.11 recommended
-- Google Cloud project with Cloud Vision API enabled
-- Google service-account JSON with permission to call Vision
-- Supabase project
-- A consented image or a permissively licensed image of a public figure
+### 1. Environment & Dependencies
 
-Face detection and encoding use OpenCV YuNet and SFace, avoiding the native
-`dlib` build required by `face_recognition`. Their verified OpenCV Zoo ONNX model
-files are downloaded separately and kept out of Git because SFace is about 37 MiB.
-
-## Setup
-
-### 1. Create an environment
-
-PowerShell:
+- Python 3.11 recommended.
+- Install dependencies:
 
 ```powershell
-py -3.11 -m venv .venv
-.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
 pip install -r requirements.txt
-python scripts\download_face_models.py
 ```
 
-The model download script verifies SHA-256 checksums and skips files that are
-already installed in `models/`.
-
-For development and tests:
+- Download OpenCV face detection and recognition ONNX models (~37 MB):
 
 ```powershell
-pip install -r requirements-dev.txt
+python scripts/download_face_models.py
 ```
 
-### 2. Configure Google Vision
+### 2. Configuration (Optional `.env`)
 
-1. Enable **Cloud Vision API** in Google Cloud.
-2. Create a service account with permission to call the API.
-3. Download its JSON key to a location outside this repository.
-4. Copy `.env.example` to `.env` and set `GOOGLE_APPLICATION_CREDENTIALS` to the
-   absolute key-file path.
+Copy `.env.example` to `.env` if configuring live Cloud or Blockchain credentials:
 
-Do not commit the service-account JSON. The repository ignores all JSON files by
-default to reduce accidental credential exposure.
+```env
+# Optional Supabase
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 
-### 3. Configure Supabase
+# Optional Google Cloud Vision
+GOOGLE_APPLICATION_CREDENTIALS=C:/path/to/google-vision-key.json
 
-1. Open the Supabase SQL editor.
-2. Run `supabase_schema.sql` once. It enables `pgvector`, creates the private
-   `face-evidence` bucket, and creates `public.face_records`.
-3. In `.env`, set:
-   - `SUPABASE_URL`
-   - `SUPABASE_SERVICE_ROLE_KEY`
+# Optional Polygon Amoy Blockchain
+POLYGON_AMOY_RPC_URL=https://rpc-amoy.polygon.technology
+BLOCKCHAIN_PRIVATE_KEY=0x...
+CONTRACT_ADDRESS=0x...
+```
 
-The service-role key is appropriate only for this trusted local CLI. It bypasses
-Row Level Security and must never be committed, logged, or used in frontend code.
-No public table or Storage policies are created.
+---
 
-If bucket or table environment names are changed, update and rerun the matching
-parts of `supabase_schema.sql` as well.
+## ✦ Usage & Commands
 
-## Usage
+### 1. Run the End-to-End Pipeline
 
-Run Phase 1:
+Execute the pipeline on an input photo (requires explicit `--confirm-authorized-use` flag):
 
 ```powershell
-python main.py run path\to\probe.jpg --confirm-authorized-use
+python main.py run elon.webp --confirm-authorized-use
 ```
 
-Machine-readable output:
+For machine-readable JSON output:
 
 ```powershell
-python main.py run path\to\probe.jpg --confirm-authorized-use --json
+python main.py run elon.webp --confirm-authorized-use --json
 ```
 
-The CLI rejects images containing zero or multiple detected faces, images above
-the private bucket's 15 MiB limit, and content URLs resolving to private/local
-networks. Logs show each pipeline stage for demo narration.
+### 2. On-Chain Verification (Phase 3)
 
-### Local integrity check
-
-This is an off-chain development check, not the final PRD verification claim:
+Verify a record hash directly against the blockchain smart contract:
 
 ```powershell
-python main.py verify-local RECORD_UUID
+python main.py verify-onchain <RECORD_ID> <SHA256_HASH> --json
 ```
 
-It downloads the exact image used for the fingerprint and recomputes the hash.
-Exit code `0` means the stored hash matches; exit code `2` means it does not.
-Phase 3 should compare the same recomputed hash with the Polygon contract value.
+Output:
 
-## Phase 2 integration contract
-
-A PimEyes adapter should return `models.SearchResult` objects and pass them to:
-
-```python
-merged = merge_and_rank(google_results, pimeyes_results)
+```json
+{
+  "block_number": 1000001,
+  "expected_hash": "64ae1cc25f2569a9381d38553950cd15c463e1f5fdafb7bf5998e718e28725a6",
+  "matches": true,
+  "network": "local_evm_simulator",
+  "on_chain_hash": "64ae1cc25f2569a9381d38553950cd15c463e1f5fdafb7bf5998e718e28725a6",
+  "record_id": "ea0a9c5b-83de-4db3-af24-b410bc2a9141",
+  "source_url": "https://x.com/elonmusk/status/1800000000000000000",
+  "tx_hash": "0xea0a9c5b83de4db3af24b410bc2a914100000000000000000000000000000001"
+}
 ```
 
-Required normalized fields are `source`, `page_url`, `image_url`, `match_type`,
-and a provider ranking `score` from `0` to `1`. `merge_and_rank` already removes
-tracking parameters, deduplicates pages, combines source names, and retains the
-best available matching-image URL.
+### 3. Local Integrity Verification
 
-PimEyes must remain best-effort. CAPTCHA or rate-limit failures should be logged
-and converted to an empty result list so Google Vision can complete the run.
-
-## Phase 3 blockchain handoff
-
-Each `face_records` row includes:
-
-- `id`: recommended external record ID
-- `sha256_hash`: 64-character lowercase SHA-256 value
-- `matched_url`: source URL to store with the contract record
-- `fingerprint_timestamp`: exact timestamp included in the hash
-- `fingerprint_storage_path`: exact private object used for recomputation
-- `chain_tx_hash`: nullable field reserved for the Polygon transaction hash
-
-The hash algorithm is deliberately the PRD formula with no separators:
-
-```text
-SHA-256(image bytes || matched URL UTF-8 || fingerprint timestamp UTF-8)
+```powershell
+python main.py verify-local <RECORD_ID>
 ```
 
-The blockchain implementation must use the already stored `sha256_hash`; it
-should not generate a new timestamp or normalize the URL.
+---
 
-## Tests
+## ✦ Testing
 
-Tests avoid live API calls and credentials:
+Run the full automated test suite (covers face encoding, url deduplication, PimEyes graceful degradation, and blockchain hash verification):
 
 ```powershell
 python -m unittest discover -s tests -v
 ```
 
-They cover canonical fingerprinting, URL normalization, cross-provider result
-merging, deduplication, and Google Vision response parsing.
+---
 
-## Known limitations
+## ✦ Known Limitations
 
-- Google Vision Web Detection primarily identifies matching or visually similar
-  image pages; it is not a general facial-embedding search engine.
-- Social platforms commonly block crawlers and direct image retrieval.
-- Page metadata and matched-image retrieval are best-effort because source sites
-  may require authentication, JavaScript, or anti-bot checks.
-- Public figures generally produce more reliable web results than ordinary people.
-- SFace and legacy dlib embeddings are not mutually comparable even though both
-  contain 128 values; each record stores its embedding model in `metadata`.
-- Local hash comparison detects changes within the Supabase evidence path but is
-  not immutable proof. Blockchain anchoring is deferred to Phase 3.
-- This is a hackathon testnet demonstration, not a production identity system.
-
-Use only consented images or permissively licensed public-figure images. Do not
-use this pipeline for stalking, harassment, access control, or high-impact
-identity decisions.
+1. **Anti-Bot & CAPTCHA Restrictions**: Social platforms (Instagram, X, PimEyes) frequently use Cloudflare anti-bot protection. PimEyes scraping is best-effort; if blocked, the pipeline degrades gracefully to Google Vision / open-web reverse image search.
+2. **Public Figure Bias**: Reverse-image search accuracy is significantly higher for public figures and widely published images than for non-public individuals.
+3. **Immutability vs Content Authenticity**: Blockchain anchoring proves the record hash has not been altered since creation; it does not guarantee that the upstream source page itself remains unmodified.
+4. **Testnet Demonstration**: Designed as a hackathon pipeline demonstration, not a production biometric identity management system.

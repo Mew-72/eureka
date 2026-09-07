@@ -20,6 +20,10 @@ class Settings:
     supabase_table: str = "face_records"
     request_timeout_seconds: float = 15.0
     max_download_bytes: int = 15 * 1024 * 1024
+    polygon_amoy_rpc_url: str | None = None
+    blockchain_private_key: str | None = None
+    contract_address: str | None = None
+    polygon_chain_id: int = 80002
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -34,6 +38,10 @@ class Settings:
                 int(os.getenv("MAX_DOWNLOAD_BYTES", str(15 * 1024 * 1024))),
                 15 * 1024 * 1024,
             ),
+            polygon_amoy_rpc_url=os.getenv("POLYGON_AMOY_RPC_URL"),
+            blockchain_private_key=os.getenv("BLOCKCHAIN_PRIVATE_KEY"),
+            contract_address=os.getenv("CONTRACT_ADDRESS"),
+            polygon_chain_id=int(os.getenv("POLYGON_CHAIN_ID", "80002")),
         )
 
     def require_supabase(self) -> tuple[str, str]:
