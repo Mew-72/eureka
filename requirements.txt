@@ -4,4 +4,5 @@ google-cloud-vision>=3.8,<4
 Pillow>=10,<12
 python-dotenv>=1.0,<2
 requests>=2.32,<3
+selenium>=4.25,<5
 supabase>=2.10,<3

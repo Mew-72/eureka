@@ -1,4 +1,4 @@
-"""CLI entry point for Phase 1 of the face identification pipeline."""
+"""CLI entry point for the face identification pipeline."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import json
 import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,7 @@ from content_fetch import ContentFetcher
 from face_encoding import EMBEDDING_MODEL, FaceEncodingError, encode_single_face
 from fingerprinting import compute_fingerprint, utc_now_iso
 from search.merge_results import merge_and_rank
+from search.pimeyes_scraper import search_pimeyes
 from search.vision_search import VisionSearchError, search_web
 from storage.supabase_pipeline import SupabasePipeline, SupabaseStorageError
 
@@ -28,18 +30,31 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verbose", action="store_true", help="Enable debug logs")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    run_parser = subparsers.add_parser("run", help="Run the Phase 1 pipeline")
+    run_parser = subparsers.add_parser("run", help="Run the search pipeline")
     run_parser.add_argument("image", type=Path, help="Path to a single-face image")
     run_parser.add_argument(
         "--max-results",
         type=int,
         default=20,
-        help="Maximum ranked Google Vision results to retain (default: 20)",
+        help="Maximum ranked search results to retain (default: 20)",
     )
     run_parser.add_argument(
         "--confirm-authorized-use",
         action="store_true",
         help="Confirm the image is consented or a permissively licensed public figure",
+    )
+    run_parser.add_argument(
+        "--use-pimeyes",
+        action="store_true",
+        help=(
+            "Upload the probe to PimEyes under its current terms and merge any "
+            "exposed source URLs"
+        ),
+    )
+    run_parser.add_argument(
+        "--show-pimeyes-browser",
+        action="store_true",
+        help="Show Chrome during PimEyes automation (requires --use-pimeyes)",
     )
     run_parser.add_argument(
         "--json", action="store_true", help="Print the final result as JSON"
@@ -62,6 +77,8 @@ def run_pipeline(args: argparse.Namespace, settings: Settings) -> dict[str, Any]
         )
     if args.max_results < 1 or args.max_results > 100:
         raise ValueError("--max-results must be between 1 and 100")
+    if args.show_pimeyes_browser and not args.use_pimeyes:
+        raise ValueError("--show-pimeyes-browser requires --use-pimeyes")
 
     # Fail before processing or sharing biometric data if persistence cannot run.
     settings.require_supabase()
@@ -82,9 +99,31 @@ def run_pipeline(args: argparse.Namespace, settings: Settings) -> dict[str, Any]
     embedding = encode_single_face(image_path)
     LOGGER.info("Generated %d-dimensional face embedding", len(embedding))
 
-    LOGGER.info("[3/6] Searching Google Vision Web Detection")
-    vision_results = search_web(image_path, max_results=args.max_results)
-    ranked_results = merge_and_rank(vision_results)
+    pimeyes_results = []
+    if args.use_pimeyes:
+        LOGGER.info("[3/6] Searching Google Vision and PimEyes in parallel")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            vision_future = executor.submit(
+                search_web, image_path, max_results=args.max_results
+            )
+            pimeyes_future = executor.submit(
+                search_pimeyes,
+                image_path,
+                max_results=args.max_results,
+                timeout_seconds=settings.pimeyes_timeout_seconds,
+                headless=(
+                    settings.pimeyes_headless and not args.show_pimeyes_browser
+                ),
+            )
+            vision_results = vision_future.result()
+            pimeyes_results = pimeyes_future.result()
+    else:
+        LOGGER.info("[3/6] Searching Google Vision Web Detection")
+        vision_results = search_web(image_path, max_results=args.max_results)
+
+    ranked_results = merge_and_rank(vision_results, pimeyes_results)[
+        : args.max_results
+    ]
     selected = ranked_results[0]
     LOGGER.info(
         "Selected %s result (type=%s, ranking_score=%.4f)",
@@ -128,7 +167,9 @@ def run_pipeline(args: argparse.Namespace, settings: Settings) -> dict[str, Any]
         fingerprint_timestamp=fingerprint_timestamp,
         sha256_hash=sha256_hash,
         fingerprint_image_source=fingerprint_image_source,
-        vision_result_count=len(ranked_results),
+        vision_result_count=len(vision_results),
+        pimeyes_result_count=len(pimeyes_results),
+        pimeyes_attempted=args.use_pimeyes,
     )
 
     return {
@@ -142,7 +183,9 @@ def run_pipeline(args: argparse.Namespace, settings: Settings) -> dict[str, Any]
         "sha256_hash": sha256_hash,
         "fingerprint_timestamp": fingerprint_timestamp,
         "fingerprint_image_source": fingerprint_image_source,
-        "vision_result_count": len(ranked_results),
+        "vision_result_count": len(vision_results),
+        "pimeyes_result_count": len(pimeyes_results),
+        "search_result_count": len(ranked_results),
         "blockchain_status": "pending_phase_3",
     }
 

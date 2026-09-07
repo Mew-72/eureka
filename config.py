@@ -12,6 +12,18 @@ class ConfigurationError(RuntimeError):
     """Raised when required pipeline configuration is absent."""
 
 
+def _environment_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigurationError(f"{name} must be true or false")
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     supabase_url: str | None
@@ -20,6 +32,8 @@ class Settings:
     supabase_table: str = "face_records"
     request_timeout_seconds: float = 15.0
     max_download_bytes: int = 15 * 1024 * 1024
+    pimeyes_timeout_seconds: float = 30.0
+    pimeyes_headless: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -34,6 +48,10 @@ class Settings:
                 int(os.getenv("MAX_DOWNLOAD_BYTES", str(15 * 1024 * 1024))),
                 15 * 1024 * 1024,
             ),
+            pimeyes_timeout_seconds=float(
+                os.getenv("PIMEYES_TIMEOUT_SECONDS", "30")
+            ),
+            pimeyes_headless=_environment_bool("PIMEYES_HEADLESS", True),
         )
 
     def require_supabase(self) -> tuple[str, str]:

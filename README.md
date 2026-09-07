@@ -8,17 +8,18 @@ CLI-only implementation of the HH Goa 2026 Task 3 pipeline described in
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Face encoding, Google Vision search, ranking, content retrieval, Supabase storage, SHA-256 | Implemented |
-| 2 | PimEyes search and cross-provider merge | Not implemented yet |
+| 2 | Opt-in PimEyes search and cross-provider merge | Implemented (best-effort) |
 | 3 | Polygon Amoy contract write and on-chain verification | Owned separately |
 
 There is no frontend or hosted application.
 
-## Phase 1 flow
+## Pipeline flow
 
 1. Validate that authorized biometric use was explicitly confirmed.
 2. Detect exactly one face with YuNet and create a 128-dimensional SFace embedding.
-3. send the original image bytes to Google Vision Web Detection.
-4. Normalize, deduplicate, and rank matching page URLs.
+3. Send the original image bytes to Google Vision Web Detection and, when
+   explicitly enabled, run PimEyes browser automation in parallel.
+4. Normalize, deduplicate, and rank matching page URLs across both providers.
 5. Retrieve the selected page's public metadata and matching image when available.
 6. Compute `SHA-256(image_bytes + matched_url + fingerprint_timestamp)`.
 7. Upload evidence to a private Supabase Storage bucket and insert its record in Postgres.
@@ -38,6 +39,7 @@ whether `matched` or `probe` bytes were used.
 - Python 3.11 recommended
 - Google Cloud project with Cloud Vision API enabled
 - Google service-account JSON with permission to call Vision
+- Latest Google Chrome when using the optional PimEyes provider
 - Supabase project
 - A consented image or a permissively licensed image of a public figure
 
@@ -97,11 +99,23 @@ parts of `supabase_schema.sql` as well.
 
 ## Usage
 
-Run Phase 1:
+Run with Google Vision only:
 
 ```powershell
 python main.py run path\to\probe.jpg --confirm-authorized-use
 ```
+
+Opt in to PimEyes and merge both providers:
+
+```powershell
+python main.py run path\to\probe.jpg --confirm-authorized-use --use-pimeyes
+```
+
+`--use-pimeyes` sends the probe image to PimEyes and programmatically accepts the
+search dialog, so use it only after reviewing and agreeing to PimEyes' current terms.
+The default is headless Chrome; add `--show-pimeyes-browser` to observe or debug the
+browser flow. Set `PIMEYES_HEADLESS=false` to make visible Chrome the environment
+default and `PIMEYES_TIMEOUT_SECONDS=30` to tune browser waits.
 
 Machine-readable output:
 
@@ -125,21 +139,21 @@ It downloads the exact image used for the fingerprint and recomputes the hash.
 Exit code `0` means the stored hash matches; exit code `2` means it does not.
 Phase 3 should compare the same recomputed hash with the Polygon contract value.
 
-## Phase 2 integration contract
+## PimEyes behavior
 
-A PimEyes adapter should return `models.SearchResult` objects and pass them to:
+`search/pimeyes_scraper.py` uses standard Selenium with the locally installed Chrome.
+Google Vision and PimEyes run in parallel, then their `models.SearchResult` objects
+are passed to `merge_and_rank(google_results, pimeyes_results)`.
 
-```python
-merged = merge_and_rank(google_results, pimeyes_results)
-```
+The adapter records only real external source-page URLs exposed in the PimEyes
+results DOM. It deliberately does not treat the PimEyes search-session URL as a
+match. Free or logged-out searches may display thumbnails without exposing source
+URLs; in that case the adapter returns no results. CAPTCHA, rate-limit, browser,
+and DOM failures are logged and converted to an empty list so Google Vision can
+still complete the run.
 
-Required normalized fields are `source`, `page_url`, `image_url`, `match_type`,
-and a provider ranking `score` from `0` to `1`. `merge_and_rank` already removes
-tracking parameters, deduplicates pages, combines source names, and retains the
-best available matching-image URL.
-
-PimEyes must remain best-effort. CAPTCHA or rate-limit failures should be logged
-and converted to an empty result list so Google Vision can complete the run.
+No proxy rotation, CAPTCHA bypass, or anti-detection behavior is included. PimEyes
+result scores preserve displayed rank and are not face-match probabilities.
 
 ## Phase 3 blockchain handoff
 
@@ -170,7 +184,8 @@ python -m unittest discover -s tests -v
 ```
 
 They cover canonical fingerprinting, URL normalization, cross-provider result
-merging, deduplication, and Google Vision response parsing.
+merging, deduplication, Google Vision response parsing, and PimEyes DOM candidate
+normalization.
 
 ## Known limitations
 
@@ -179,6 +194,8 @@ merging, deduplication, and Google Vision response parsing.
 - Social platforms commonly block crawlers and direct image retrieval.
 - Page metadata and matched-image retrieval are best-effort because source sites
   may require authentication, JavaScript, or anti-bot checks.
+- PimEyes automation is inherently unstable (CAPTCHA, IP rate limits, paywalled
+  source links, and DOM changes) and is best-effort, not guaranteed, in any run.
 - Public figures generally produce more reliable web results than ordinary people.
 - SFace and legacy dlib embeddings are not mutually comparable even though both
   contain 128 values; each record stores its embedding model in `metadata`.

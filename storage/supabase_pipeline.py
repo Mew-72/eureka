@@ -57,6 +57,8 @@ class SupabasePipeline:
         sha256_hash: str,
         fingerprint_image_source: str,
         vision_result_count: int,
+        pimeyes_result_count: int = 0,
+        pimeyes_attempted: bool = False,
     ) -> dict[str, Any]:
         record_id = str(uuid4())
         prefix = f"records/{record_id}"
@@ -119,9 +121,14 @@ class SupabasePipeline:
             "vision_result_count": vision_result_count,
             "chain_tx_hash": None,
             "metadata": {
-                "phase": 1,
+                "phase": 2 if pimeyes_attempted else 1,
                 "blockchain_status": "pending_phase_3",
                 "embedding_model": embedding_model,
+                "search_provider_counts": {
+                    "google_vision": vision_result_count,
+                    "pimeyes": pimeyes_result_count,
+                },
+                "pimeyes_attempted": pimeyes_attempted,
             },
         }
         try:
