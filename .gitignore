@@ -14,3 +14,4 @@ htmlcov/
 google-vision
 models/*.onnx
 models/*.part-api-service-account.json
+google-vision-api-service-account.json

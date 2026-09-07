@@ -41,4 +41,4 @@ comment on column public.face_records.face_embedding is
 comment on column public.face_records.match_score is
     'Provider relevance/ranking score, not face-identification confidence.';
 comment on column public.face_records.chain_tx_hash is
-    'Reserved for the Phase 3 blockchain integration.';
+    'Polygon transaction that anchored this record fingerprint on-chain.';

@@ -27,6 +27,16 @@ class VerificationResult:
     recomputed_hash: str
     matches: bool
     image_source: str
+    matched_url: str
+    chain_tx_hash: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AnchorPayload:
+    record_id: str
+    sha256_hash: str
+    matched_url: str
+    chain_tx_hash: str | None
 
 
 class SupabasePipeline:
@@ -122,7 +132,6 @@ class SupabasePipeline:
             "chain_tx_hash": None,
             "metadata": {
                 "phase": 2 if pimeyes_attempted else 1,
-                "blockchain_status": "pending_phase_3",
                 "embedding_model": embedding_model,
                 "search_provider_counts": {
                     "google_vision": vision_result_count,
@@ -146,18 +155,60 @@ class SupabasePipeline:
                 f"Failed to insert record {record_id}; evidence remains under {prefix}"
             ) from exc
 
-    def verify_local(self, record_id: str) -> VerificationResult:
+    def get_anchor_payload(self, record_id: str) -> AnchorPayload:
+        self._validate_record_id(record_id)
         try:
-            UUID(record_id)
-        except ValueError as exc:
-            raise SupabaseStorageError("Record ID must be a valid UUID") from exc
+            response = (
+                self.client.table(self.table)
+                .select("id,sha256_hash,matched_url,chain_tx_hash")
+                .eq("id", record_id)
+                .single()
+                .execute()
+            )
+            row = response.data
+            return AnchorPayload(
+                record_id=str(row["id"]),
+                sha256_hash=str(row["sha256_hash"]),
+                matched_url=str(row["matched_url"]),
+                chain_tx_hash=(
+                    str(row["chain_tx_hash"]) if row.get("chain_tx_hash") else None
+                ),
+            )
+        except Exception as exc:
+            raise SupabaseStorageError(
+                f"Failed to retrieve anchor payload for {record_id}"
+            ) from exc
+
+    def save_chain_tx_hash(self, record_id: str, transaction_hash: str) -> None:
+        self._validate_record_id(record_id)
+        try:
+            response = (
+                self.client.table(self.table)
+                .update({"chain_tx_hash": transaction_hash})
+                .eq("id", record_id)
+                .execute()
+            )
+            if not getattr(response, "data", None):
+                raise SupabaseStorageError(
+                    f"Supabase update returned no record for {record_id}"
+                )
+        except Exception as exc:
+            if isinstance(exc, SupabaseStorageError):
+                raise
+            raise SupabaseStorageError(
+                f"Transaction {transaction_hash} succeeded, but its hash could not "
+                f"be saved for record {record_id}"
+            ) from exc
+
+    def verify_local(self, record_id: str) -> VerificationResult:
+        self._validate_record_id(record_id)
 
         try:
             response = (
                 self.client.table(self.table)
                 .select(
                     "id,sha256_hash,matched_url,fingerprint_timestamp,"
-                    "fingerprint_storage_path,fingerprint_image_source"
+                    "fingerprint_storage_path,fingerprint_image_source,chain_tx_hash"
                 )
                 .eq("id", record_id)
                 .single()
@@ -182,7 +233,18 @@ class SupabasePipeline:
             recomputed_hash=recomputed,
             matches=stored == recomputed,
             image_source=str(row["fingerprint_image_source"]),
+            matched_url=str(row["matched_url"]),
+            chain_tx_hash=(
+                str(row["chain_tx_hash"]) if row.get("chain_tx_hash") else None
+            ),
         )
+
+    @staticmethod
+    def _validate_record_id(record_id: str) -> None:
+        try:
+            UUID(record_id)
+        except ValueError as exc:
+            raise SupabaseStorageError("Record ID must be a valid UUID") from exc
 
     def _upload(self, path: str, content: bytes, content_type: str) -> None:
         if len(content) > self.max_upload_bytes:

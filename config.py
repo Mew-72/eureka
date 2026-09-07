@@ -34,6 +34,11 @@ class Settings:
     max_download_bytes: int = 15 * 1024 * 1024
     pimeyes_timeout_seconds: float = 30.0
     pimeyes_headless: bool = True
+    polygon_rpc_url: str | None = None
+    polygon_private_key: str | None = None
+    face_record_contract_address: str | None = None
+    polygon_chain_id: int = 80002
+    blockchain_confirmation_timeout_seconds: float = 120.0
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -52,6 +57,13 @@ class Settings:
                 os.getenv("PIMEYES_TIMEOUT_SECONDS", "30")
             ),
             pimeyes_headless=_environment_bool("PIMEYES_HEADLESS", True),
+            polygon_rpc_url=os.getenv("POLYGON_RPC_URL"),
+            polygon_private_key=os.getenv("POLYGON_PRIVATE_KEY"),
+            face_record_contract_address=os.getenv("FACE_RECORD_CONTRACT_ADDRESS"),
+            polygon_chain_id=int(os.getenv("POLYGON_CHAIN_ID", "80002")),
+            blockchain_confirmation_timeout_seconds=float(
+                os.getenv("BLOCKCHAIN_CONFIRMATION_TIMEOUT_SECONDS", "120")
+            ),
         )
 
     def require_supabase(self) -> tuple[str, str]:
@@ -68,3 +80,39 @@ class Settings:
             )
         assert url is not None and key is not None
         return url, key
+
+    def require_blockchain_reader(self) -> tuple[str, str]:
+        missing = []
+        if not self.polygon_rpc_url:
+            missing.append("POLYGON_RPC_URL")
+        if not self.face_record_contract_address:
+            missing.append("FACE_RECORD_CONTRACT_ADDRESS")
+        if missing:
+            raise ConfigurationError(
+                "Missing required environment variables: " + ", ".join(missing)
+            )
+        assert self.polygon_rpc_url is not None
+        assert self.face_record_contract_address is not None
+        return self.polygon_rpc_url, self.face_record_contract_address
+
+    def require_blockchain_writer(self) -> tuple[str, str, str]:
+        rpc_url, contract_address = self.require_blockchain_reader()
+        if not self.polygon_private_key:
+            raise ConfigurationError(
+                "Missing required environment variable: POLYGON_PRIVATE_KEY"
+            )
+        return rpc_url, contract_address, self.polygon_private_key
+
+    def require_blockchain_deployer(self) -> tuple[str, str]:
+        missing = []
+        if not self.polygon_rpc_url:
+            missing.append("POLYGON_RPC_URL")
+        if not self.polygon_private_key:
+            missing.append("POLYGON_PRIVATE_KEY")
+        if missing:
+            raise ConfigurationError(
+                "Missing required environment variables: " + ", ".join(missing)
+            )
+        assert self.polygon_rpc_url is not None
+        assert self.polygon_private_key is not None
+        return self.polygon_rpc_url, self.polygon_private_key

@@ -6,3 +6,6 @@ python-dotenv>=1.0,<2
 requests>=2.32,<3
 selenium>=4.25,<5
 supabase>=2.10,<3
+web3>=7.0,<8
+py-solc-x>=2.0,<3
+eth-tester>=0.13.0b1,<0.14
