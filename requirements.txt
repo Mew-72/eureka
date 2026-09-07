@@ -1,0 +1,7 @@
+beautifulsoup4>=4.12,<5
+opencv-python-headless>=4.10,<5
+google-cloud-vision>=3.8,<4
+Pillow>=10,<12
+python-dotenv>=1.0,<2
+requests>=2.32,<3
+supabase>=2.10,<3

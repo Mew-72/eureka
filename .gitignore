@@ -1,0 +1,16 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+*.json
+!package.json
+.idea/
+.vscode/
+.DS_Store
+google-vision
+models/*.onnx
+models/*.part-api-service-account.json
